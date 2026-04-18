@@ -151,6 +151,50 @@ docker run -d \
 
 ## Docker Compose
 
+首次使用 `docker compose` 持久化部署时，建议在项目目录下新建 `.env` 文件，而不是每次手动 `export`。
+
+目录示例：
+
+```text
+/www/server/panel/data/compose/freebuff/.env
+```
+
+推荐模板：
+
+```env
+FREEBUFF_AUTH_TOKEN=your-auth-token
+API_KEY=
+FREEBUFF_AUTH_TOKENS=
+```
+
+如果你想启用代理访问鉴权，可以写成：
+
+```env
+FREEBUFF_AUTH_TOKEN=your-auth-token
+API_KEY=your-proxy-api-key
+FREEBUFF_AUTH_TOKENS=
+```
+
+如果需要更长的流式超时，也可以把可选参数一起写进 `.env`：
+
+```env
+FREEBUFF_AUTH_TOKEN=your-auth-token
+API_KEY=
+FREEBUFF_AUTH_TOKENS=
+UPSTREAM_CONNECT_TIMEOUT_S=30
+UPSTREAM_STREAM_READ_TIMEOUT_S=600
+```
+
+当前 `docker-compose.yml` 会自动读取同目录下的 `.env`：
+
+```yaml
+API_KEY: "${API_KEY:-}"
+FREEBUFF_AUTH_TOKEN: "${FREEBUFF_AUTH_TOKEN:-}"
+FREEBUFF_AUTH_TOKENS: "${FREEBUFF_AUTH_TOKENS:-}"
+```
+
+启动命令：
+
 ```bash
 docker compose up -d --build
 ```
@@ -162,7 +206,7 @@ docker compose up -d --build
 - `FREEBUFF_AUTH_TOKEN` / `FREEBUFF_AUTH_TOKENS`
 - `UPSTREAM_CONNECT_TIMEOUT_S` / `UPSTREAM_STREAM_READ_TIMEOUT_S`
 
-服务器部署时，通常只需要把 token 写进环境变量即可。
+服务器部署时，通常只需要把 token 写进 `.env` 即可。
 
 ## 接口说明
 
