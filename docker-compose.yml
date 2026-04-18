@@ -1,0 +1,15 @@
+services:
+  freebuff:
+    build: .
+    container_name: freebuff
+    ports:
+      - "9090:9090"
+    environment:
+      PORT: 9090
+      API_KEY: ""
+      FREEBUFF_API_BASE: www.codebuff.com
+      POLL_INTERVAL_S: 5
+      TIMEOUT_S: 300
+      FREEBUFF_AUTH_TOKEN: ""
+      FREEBUFF_AUTH_TOKENS: ""
+    restart: unless-stopped
