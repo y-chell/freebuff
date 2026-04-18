@@ -10,6 +10,8 @@ services:
       FREEBUFF_API_BASE: www.codebuff.com
       POLL_INTERVAL_S: 5
       TIMEOUT_S: 300
+      UPSTREAM_CONNECT_TIMEOUT_S: 30
+      UPSTREAM_STREAM_READ_TIMEOUT_S: 600
       FREEBUFF_AUTH_TOKEN: ""
       FREEBUFF_AUTH_TOKENS: ""
     restart: unless-stopped

@@ -30,6 +30,8 @@ API_BASE = os.environ.get("FREEBUFF_API_BASE", "www.codebuff.com")
 LOCAL_PORT = int(os.environ.get("PORT", "9090"))
 POLL_INTERVAL_S = int(os.environ.get("POLL_INTERVAL_S", "5"))
 TIMEOUT_S = int(os.environ.get("TIMEOUT_S", "300"))
+UPSTREAM_CONNECT_TIMEOUT_S = int(os.environ.get("UPSTREAM_CONNECT_TIMEOUT_S", "30"))
+UPSTREAM_STREAM_READ_TIMEOUT_S = int(os.environ.get("UPSTREAM_STREAM_READ_TIMEOUT_S", "600"))
 
 # 本代理的访问鉴权 Key（空字符串 = 不鉴权）
 # 可在环境变量 API_KEY 或 --api-key 命令行参数中设置
@@ -283,7 +285,10 @@ async def api_request(session, hostname, path, body=None, auth_token=None, metho
     if auth_token:
         headers["Authorization"] = f"Bearer {auth_token}"
 
-    kwargs = {"headers": headers, "timeout": aiohttp.ClientTimeout(total=30)}
+    kwargs = {
+        "headers": headers,
+        "timeout": aiohttp.ClientTimeout(total=UPSTREAM_CONNECT_TIMEOUT_S),
+    }
     if body and method == "POST":
         kwargs["json"] = body
 
@@ -423,14 +428,26 @@ async def stream_to_openai_format(session, freebuff_body, auth_token, response, 
     response_id = f"freebuff-{int(time.time() * 1000)}"
     finish_reason = "stop"
 
-    timeout = aiohttp.ClientTimeout(total=120)
+    timeout = aiohttp.ClientTimeout(total=None, sock_connect=UPSTREAM_CONNECT_TIMEOUT_S, sock_read=UPSTREAM_STREAM_READ_TIMEOUT_S)
+    sent_done = False
+    last_keepalive_at = 0.0
+    keepalive_interval_s = 15
     async with session.post(url, json=freebuff_body, headers=headers, timeout=timeout) as resp:
         if resp.status != 200:
             err = await resp.text()
             raise RuntimeError(f"HTTP {resp.status}: {err}")
 
         buffer = ""
-        async for chunk in resp.content.iter_any():
+        while True:
+            try:
+                chunk = await asyncio.wait_for(resp.content.readany(), timeout=keepalive_interval_s)
+            except asyncio.TimeoutError:
+                await response.write(b": keep-alive\n\n")
+                continue
+
+            if not chunk:
+                break
+
             buffer += chunk.decode("utf-8", errors="replace")
             lines = buffer.split("\n")
             buffer = lines.pop()
@@ -441,7 +458,7 @@ async def stream_to_openai_format(session, freebuff_body, auth_token, response, 
                     continue
                 json_str = trimmed[6:].strip()
                 if json_str == "[DONE]":
-                    await response.write(b"data: [DONE]\n\n")
+                    sent_done = True
                     continue
                 try:
                     parsed = json.loads(json_str)
@@ -467,6 +484,11 @@ async def stream_to_openai_format(session, freebuff_body, auth_token, response, 
                             "choices": [{"index": 0, "delta": delta_obj, "finish_reason": None}],
                         }
                         await response.write(f"data: {json.dumps(openai_chunk)}\n\n".encode())
+                    else:
+                        now = time.monotonic()
+                        if now - last_keepalive_at >= 1:
+                            await response.write(b": keep-alive\n\n")
+                            last_keepalive_at = now
                 except Exception:
                     pass
 
@@ -478,7 +500,8 @@ async def stream_to_openai_format(session, freebuff_body, auth_token, response, 
             "choices": [{"index": 0, "delta": {}, "finish_reason": finish_reason}],
         }
         await response.write(f"data: {json.dumps(final_chunk)}\n\n".encode())
-        await response.write(b"data: [DONE]\n\n")
+        if not sent_done:
+            await response.write(b"data: [DONE]\n\n")
         await response.write_eof()
 
 
@@ -632,8 +655,9 @@ async def handle_chat_completion(request):
             else:
                 return web.json_response({"error": {"message": res["data"]}}, status=res["status"])
     except Exception as e:
-        log(f"请求失败: {e}", "error")
-        return web.json_response({"error": {"message": str(e)}}, status=500)
+        error_message = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
+        log(f"请求失败: {error_message}", "error")
+        return web.json_response({"error": {"message": error_message}}, status=500)
 
 
 async def handle_responses(request):
@@ -869,8 +893,9 @@ async def handle_responses(request):
             return web.json_response(result)
 
     except Exception as e:
-        log(f"Responses API 请求失败: {e}", "error")
-        return web.json_response({"error": {"message": str(e)}}, status=500)
+        error_message = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
+        log(f"Responses API 请求失败: {error_message}", "error")
+        return web.json_response({"error": {"message": error_message}}, status=500)
 
 
 async def handle_models(request):
